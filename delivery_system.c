@@ -11,18 +11,18 @@
 #define INF 999999
 #define CANVAS_WIDTH 800
 #define CANVAS_HEIGHT 600
+#define VEHICLE_SIZE 20
+#define ANIMATION_INTERVAL 50
 
-// Structure for delivery locations
 typedef struct {
     int id;
     char name[100];
     double lat, lon;
-    double x, y; // Screen coordinates
+    double x, y;
     int is_depot;
     int package_count;
 } DeliveryPoint;
 
-// Structure for packages
 typedef struct {
     int id;
     int weight;
@@ -32,20 +32,20 @@ typedef struct {
     int destination_id;
 } Package;
 
-// Structure for routes
 typedef struct {
     int from, to;
     double distance;
     double carbon_emission_factor;
 } Route;
 
-// Main application structure
 typedef struct {
     GtkWidget *window;
     GtkWidget *drawing_area;
     GtkWidget *info_label;
     GtkWidget *route_button;
     GtkWidget *optimize_button;
+    GtkWidget *start_button;
+    GtkWidget *speed_scale;
     
     DeliveryPoint points[MAX_NODES];
     Package packages[MAX_PACKAGES];
@@ -62,12 +62,16 @@ typedef struct {
     
     int selected_point;
     gboolean show_route;
+    
+    gboolean animation_running;
+    int current_route_segment;
+    double vehicle_progress;
+    guint animation_timeout_id;
+    double animation_speed;
 } DeliveryApp;
 
-// Global app instance
 DeliveryApp *app;
 
-// Dijkstra's algorithm implementation
 void dijkstra(int graph[MAX_NODES][MAX_NODES], int src, int dist[], int parent[]) {
     gboolean visited[MAX_NODES] = {FALSE};
     
@@ -101,7 +105,6 @@ void dijkstra(int graph[MAX_NODES][MAX_NODES], int src, int dist[], int parent[]
     }
 }
 
-// Knapsack algorithm for package optimization
 int knapsack(int capacity) {
     int dp[capacity + 1];
     memset(dp, 0, sizeof(dp));
@@ -121,16 +124,13 @@ int knapsack(int capacity) {
     return dp[capacity];
 }
 
-// Calculate distance between two points
 double calculate_distance(DeliveryPoint *p1, DeliveryPoint *p2) {
     double dx = p1->x - p2->x;
     double dy = p1->y - p2->y;
     return sqrt(dx * dx + dy * dy);
 }
 
-// Initialize sample data for Bengaluru
 void initialize_data() {
-    // Sample delivery points in Bengaluru
     char *locations[] = {
         "Depot - Koramangala", "Electronic City", "Whitefield", "Banashankari",
         "Jayanagar", "Indiranagar", "HSR Layout", "BTM Layout",
@@ -139,20 +139,15 @@ void initialize_data() {
     
     app->num_points = 12;
     
-    // Initialize points with pseudo-coordinates
     for (int i = 0; i < app->num_points; i++) {
         app->points[i].id = i;
         strcpy(app->points[i].name, locations[i]);
         app->points[i].is_depot = (i == 0);
-        
-        // Distribute points across the canvas
         app->points[i].x = 100 + (i % 4) * 180 + (rand() % 50);
         app->points[i].y = 100 + (i / 4) * 150 + (rand() % 50);
-        
         app->points[i].package_count = rand() % 5 + 1;
     }
     
-    // Initialize sample packages
     app->num_packages = 20;
     for (int i = 0; i < app->num_packages; i++) {
         app->packages[i].id = i;
@@ -163,24 +158,20 @@ void initialize_data() {
         app->packages[i].destination_id = rand() % (app->num_points - 1) + 1;
     }
     
-    // Initialize routes
     app->num_routes = 0;
     for (int i = 0; i < app->num_points; i++) {
         for (int j = i + 1; j < app->num_points; j++) {
             app->routes[app->num_routes].from = i;
             app->routes[app->num_routes].to = j;
             app->routes[app->num_routes].distance = calculate_distance(&app->points[i], &app->points[j]);
-            app->routes[app->num_routes].carbon_emission_factor = 0.21 + (rand() % 10) / 100.0; // kg CO2 per km
+            app->routes[app->num_routes].carbon_emission_factor = 0.21 + (rand() % 10) / 100.0;
             app->num_routes++;
         }
     }
 }
 
-// Calculate optimal route using nearest neighbor with Dijkstra
 void calculate_optimal_route() {
-    if (app->optimal_route) {
-        free(app->optimal_route);
-    }
+    if (app->optimal_route) free(app->optimal_route);
     
     app->optimal_route = malloc(app->num_points * sizeof(int));
     app->route_length = 0;
@@ -188,11 +179,10 @@ void calculate_optimal_route() {
     app->total_emissions = 0;
     
     gboolean visited[MAX_NODES] = {FALSE};
-    int current = 0; // Start from depot
+    int current = 0;
     app->optimal_route[app->route_length++] = current;
     visited[current] = TRUE;
     
-    // Nearest neighbor approach
     while (app->route_length < app->num_points) {
         double min_distance = INF;
         int next_point = -1;
@@ -211,14 +201,13 @@ void calculate_optimal_route() {
             app->optimal_route[app->route_length++] = next_point;
             visited[next_point] = TRUE;
             app->total_distance += min_distance;
-            app->total_emissions += min_distance * 0.21; // Approximate emission factor
+            app->total_emissions += min_distance * 0.21;
             current = next_point;
         } else {
             break;
         }
     }
     
-    // Return to depot
     if (app->route_length > 1) {
         app->total_distance += calculate_distance(&app->points[current], &app->points[0]);
         app->total_emissions += calculate_distance(&app->points[current], &app->points[0]) * 0.21;
@@ -227,13 +216,10 @@ void calculate_optimal_route() {
     app->show_route = TRUE;
 }
 
-// Drawing callback
 gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
-    // Clear background
     cairo_set_source_rgb(cr, 0.95, 0.95, 0.95);
     cairo_paint(cr);
     
-    // Draw routes if showing optimal route
     if (app->show_route && app->optimal_route && app->route_length > 1) {
         cairo_set_source_rgb(cr, 0.2, 0.6, 1.0);
         cairo_set_line_width(cr, 3.0);
@@ -247,31 +233,25 @@ gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
             cairo_stroke(cr);
         }
         
-        // Return to depot
-        if (app->route_length > 1) {
-            int last = app->optimal_route[app->route_length - 1];
-            cairo_move_to(cr, app->points[last].x, app->points[last].y);
-            cairo_line_to(cr, app->points[0].x, app->points[0].y);
-            cairo_stroke(cr);
-        }
+        int last = app->optimal_route[app->route_length - 1];
+        cairo_move_to(cr, app->points[last].x, app->points[last].y);
+        cairo_line_to(cr, app->points[0].x, app->points[0].y);
+        cairo_stroke(cr);
     }
     
-    // Draw delivery points
     for (int i = 0; i < app->num_points; i++) {
         double x = app->points[i].x;
         double y = app->points[i].y;
         
-        // Draw point
         if (app->points[i].is_depot) {
-            cairo_set_source_rgb(cr, 1.0, 0.0, 0.0); // Red for depot
+            cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
             cairo_arc(cr, x, y, 12, 0, 2 * M_PI);
         } else {
-            cairo_set_source_rgb(cr, 0.0, 0.8, 0.0); // Green for delivery points
+            cairo_set_source_rgb(cr, 0.0, 0.8, 0.0);
             cairo_arc(cr, x, y, 10, 0, 2 * M_PI);
         }
         cairo_fill(cr);
         
-        // Draw selection highlight
         if (i == app->selected_point) {
             cairo_set_source_rgb(cr, 1.0, 1.0, 0.0);
             cairo_set_line_width(cr, 2.0);
@@ -279,27 +259,109 @@ gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
             cairo_stroke(cr);
         }
         
-        // Draw labels
         cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
         cairo_move_to(cr, x + 15, y - 5);
         cairo_show_text(cr, app->points[i].name);
         
-        // Show package count
         char package_info[50];
         snprintf(package_info, sizeof(package_info), "Packages: %d", app->points[i].package_count);
         cairo_move_to(cr, x + 15, y + 10);
         cairo_show_text(cr, package_info);
     }
     
+    if (app->animation_running && app->optimal_route) {
+        if (app->current_route_segment < app->route_length) {
+            int from = app->optimal_route[app->current_route_segment];
+            int to = app->optimal_route[(app->current_route_segment + 1) % app->route_length];
+            
+            double start_x = app->points[from].x;
+            double start_y = app->points[from].y;
+            double end_x = app->points[to].x;
+            double end_y = app->points[to].y;
+            
+            double vehicle_x = start_x + (end_x - start_x) * app->vehicle_progress;
+            double vehicle_y = start_y + (end_y - start_y) * app->vehicle_progress;
+            
+            cairo_set_source_rgb(cr, 0.8, 0.2, 0.2);
+            cairo_arc(cr, vehicle_x, vehicle_y, VEHICLE_SIZE/2, 0, 2 * M_PI);
+            cairo_fill(cr);
+            
+            cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+            cairo_arc(cr, 
+                vehicle_x + VEHICLE_SIZE/3 * cos(atan2(end_y - start_y, end_x - start_x)),
+                vehicle_y + VEHICLE_SIZE/3 * sin(atan2(end_y - start_y, end_x - start_x)),
+                VEHICLE_SIZE/4, 0, 2 * M_PI);
+            cairo_fill(cr);
+        }
+    }
+    
     return FALSE;
 }
 
-// Mouse click callback
+gboolean animation_step(gpointer data) {
+    DeliveryApp *app = (DeliveryApp *)data;
+    
+    if (app->current_route_segment >= app->route_length) {
+        app->current_route_segment = 0;
+        app->vehicle_progress = 0.0;
+        return G_SOURCE_CONTINUE;
+    }
+
+    app->vehicle_progress += 0.02 * app->animation_speed;
+    
+    if (app->vehicle_progress >= 1.0) {
+        app->current_route_segment++;
+        app->vehicle_progress = 0.0;
+        
+        if (app->current_route_segment >= app->route_length) {
+            app->current_route_segment = 0;
+        }
+    }
+    
+    gtk_widget_queue_draw(app->drawing_area);
+    return G_SOURCE_CONTINUE;
+}
+
+void start_delivery_animation(DeliveryApp *app) {
+    if (!app->animation_running && app->optimal_route) {
+        app->animation_running = TRUE;
+        app->current_route_segment = 0;
+        app->vehicle_progress = 0.0;
+        app->animation_timeout_id = g_timeout_add(ANIMATION_INTERVAL, animation_step, app);
+    }
+}
+
+void stop_delivery_animation(DeliveryApp *app) {
+    if (app->animation_running) {
+        app->animation_running = FALSE;
+        if (app->animation_timeout_id) {
+            g_source_remove(app->animation_timeout_id);
+            app->animation_timeout_id = 0;
+        }
+    }
+}
+
+void on_start_delivery(GtkWidget *widget, gpointer data) {
+    DeliveryApp *app = (DeliveryApp *)data;
+    
+    if (!app->animation_running) {
+        start_delivery_animation(app);
+        gtk_button_set_label(GTK_BUTTON(widget), "Stop Delivery");
+    } else {
+        stop_delivery_animation(app);
+        gtk_button_set_label(GTK_BUTTON(widget), "Start Delivery");
+    }
+}
+
+void on_speed_changed(GtkRange *range, gpointer data) {
+    DeliveryApp *app = (DeliveryApp *)data;
+    app->animation_speed = gtk_range_get_value(range);
+}
+
 gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data) {
     double x = event->x;
     double y = event->y;
     
-    // Find clicked point
     app->selected_point = -1;
     for (int i = 0; i < app->num_points; i++) {
         double dx = x - app->points[i].x;
@@ -312,7 +374,6 @@ gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data
         }
     }
     
-    // Update info label
     if (app->selected_point >= 0) {
         char info[500];
         DeliveryPoint *point = &app->points[app->selected_point];
@@ -329,13 +390,11 @@ gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data
     return TRUE;
 }
 
-// Route calculation button callback
 void on_calculate_route(GtkWidget *widget, gpointer data) {
     calculate_optimal_route();
     
-    // Update info display
     char info[300];
-    int optimal_value = knapsack(50); // Assuming 50kg capacity
+    int optimal_value = knapsack(50);
     snprintf(info, sizeof(info),
             "Route calculated! Distance: %.1f km | Emissions: %.2f kg CO2 | Package Value: %d",
             app->total_distance / 10, app->total_emissions / 10, optimal_value);
@@ -344,9 +403,8 @@ void on_calculate_route(GtkWidget *widget, gpointer data) {
     gtk_widget_queue_draw(app->drawing_area);
 }
 
-// Package optimization callback
 void on_optimize_packages(GtkWidget *widget, gpointer data) {
-    int optimal_value = knapsack(50); // 50kg capacity
+    int optimal_value = knapsack(50);
     
     char info[200];
     snprintf(info, sizeof(info),
@@ -355,99 +413,76 @@ void on_optimize_packages(GtkWidget *widget, gpointer data) {
     gtk_label_set_text(GTK_LABEL(app->info_label), info);
 }
 
-// Initialize GTK interface
 void init_gui() {
     app->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(app->window), "Bengaluru Smart Delivery System");
     gtk_window_set_default_size(GTK_WINDOW(app->window), 900, 700);
     gtk_window_set_position(GTK_WINDOW(app->window), GTK_WIN_POS_CENTER);
     
-    // Main container
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_container_add(GTK_CONTAINER(app->window), vbox);
     
-    // Control panel
     GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 5);
     
     app->route_button = gtk_button_new_with_label("Calculate Optimal Route");
     app->optimize_button = gtk_button_new_with_label("Optimize Packages");
+    app->start_button = gtk_button_new_with_label("Start Delivery");
+    GtkWidget *speed_label = gtk_label_new("Speed:");
+    app->speed_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.5, 3.0, 0.5);
+    gtk_range_set_value(GTK_RANGE(app->speed_scale), 1.0);
     
     gtk_box_pack_start(GTK_BOX(hbox), app->route_button, FALSE, FALSE, 5);
     gtk_box_pack_start(GTK_BOX(hbox), app->optimize_button, FALSE, FALSE, 5);
+    gtk_box_pack_start(GTK_BOX(hbox), app->start_button, FALSE, FALSE, 5);
+    gtk_box_pack_start(GTK_BOX(hbox), speed_label, FALSE, FALSE, 5);
+    gtk_box_pack_start(GTK_BOX(hbox), app->speed_scale, FALSE, FALSE, 5);
     
-    // Drawing area
     app->drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(app->drawing_area, CANVAS_WIDTH, CANVAS_HEIGHT);
     gtk_box_pack_start(GTK_BOX(vbox), app->drawing_area, TRUE, TRUE, 0);
     
-    // Info label
     app->info_label = gtk_label_new("Bengaluru Smart Delivery System - Click on delivery points for details");
     gtk_box_pack_start(GTK_BOX(vbox), app->info_label, FALSE, FALSE, 5);
     
-    // Connect signals
     g_signal_connect(app->window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     g_signal_connect(app->drawing_area, "draw", G_CALLBACK(on_draw), NULL);
     g_signal_connect(app->drawing_area, "button-press-event", G_CALLBACK(on_button_press), NULL);
     g_signal_connect(app->route_button, "clicked", G_CALLBACK(on_calculate_route), NULL);
     g_signal_connect(app->optimize_button, "clicked", G_CALLBACK(on_optimize_packages), NULL);
+    g_signal_connect(app->start_button, "clicked", G_CALLBACK(on_start_delivery), app);
+    g_signal_connect(app->speed_scale, "value-changed", G_CALLBACK(on_speed_changed), app);
     
-    // Enable events
     gtk_widget_add_events(app->drawing_area, GDK_BUTTON_PRESS_MASK);
+    
+    app->animation_running = FALSE;
+    app->current_route_segment = 0;
+    app->vehicle_progress = 0.0;
+    app->animation_speed = 1.0;
     
     gtk_widget_show_all(app->window);
 }
 
 int main(int argc, char *argv[]) {
-    // Initialize GTK
     gtk_init(&argc, &argv);
     
-    // Initialize application
     app = malloc(sizeof(DeliveryApp));
     memset(app, 0, sizeof(DeliveryApp));
     app->selected_point = -1;
     app->show_route = FALSE;
     
-    // Initialize data and GUI
     initialize_data();
     init_gui();
     
     printf("Bengaluru Smart Delivery System Started!\n");
     printf("- Click on delivery points for details\n");
     printf("- Use 'Calculate Optimal Route' to find best path\n");
-    printf("- Use 'Optimize Packages' for load optimization\n");
+    printf("- Use 'Start Delivery' to begin vehicle animation\n");
     
-    // Run main loop
     gtk_main();
     
-    // Cleanup
-    if (app->optimal_route) {
-        free(app->optimal_route);
-    }
+    if (app->optimal_route) free(app->optimal_route);
     free(app);
     
     return 0;
 }
-
-/*
-=== WINDOWS COMPILATION INSTRUCTIONS ===
-
-Method 1 - MSYS2 (Recommended):
-1. Install MSYS2 from https://www.msys2.org/
-2. In MSYS2 terminal:
-   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-gtk3 mingw-w64-x86_64-pkg-config
-3. Compile: gcc -o delivery_system.exe delivery_system.c `pkg-config --cflags --libs gtk+-3.0` -lm
-4. Run: ./delivery_system.exe
-
-Method 2 - Visual Studio:
-1. Install Visual Studio with C++ tools
-2. Install vcpkg and GTK: vcpkg install gtk:x64-windows
-3. Create project and link GTK libraries
-
-Method 3 - Pre-built GTK:
-1. Download GTK for Windows from gtk.org
-2. Add GTK bin directory to PATH
-3. Use MinGW or Visual Studio to compile with GTK flags
-
-Required Libraries: gtk+-3.0, cairo, glib-2.0, gobject-2.0
-*/
