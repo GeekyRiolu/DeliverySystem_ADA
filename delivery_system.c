@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <limits.h>
-
+#define M_PI 3.14159265358979323846
 #define MAX_NODES 50
 #define MAX_PACKAGES 100
 #define INF 999999
@@ -219,20 +219,41 @@ void calculate_optimal_route() {
 gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
     cairo_set_source_rgb(cr, 0.95, 0.95, 0.95);
     cairo_paint(cr);
-    
+    // Draw all routes and distances (gray)
+    cairo_set_source_rgb(cr, 0.7, 0.7, 0.7);
+    cairo_set_line_width(cr, 1.0);
+    for (int i = 0; i < app->num_routes; i++) {
+        int from = app->routes[i].from;
+        int to = app->routes[i].to;
+        double x1 = app->points[from].x;
+        double y1 = app->points[from].y;
+        double x2 = app->points[to].x;
+        double y2 = app->points[to].y;
+        cairo_move_to(cr, x1, y1);
+        cairo_line_to(cr, x2, y2);
+        cairo_stroke(cr);
+        // Draw distance at midpoint
+        double mx = (x1 + x2) / 2;
+        double my = (y1 + y2) / 2;
+        char dist_str[16];
+        snprintf(dist_str, sizeof(dist_str), "%.1f", app->routes[i].distance / 10.0); // scale for km
+        cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
+        cairo_move_to(cr, mx + 5, my - 5);
+        cairo_show_text(cr, dist_str);
+        cairo_set_source_rgb(cr, 0.7, 0.7, 0.7); // reset for next line
+    }
+    // Highlight the optimal route (blue, thick)
     if (app->show_route && app->optimal_route && app->route_length > 1) {
         cairo_set_source_rgb(cr, 0.2, 0.6, 1.0);
         cairo_set_line_width(cr, 3.0);
-        
         for (int i = 0; i < app->route_length - 1; i++) {
             int from = app->optimal_route[i];
             int to = app->optimal_route[i + 1];
-            
             cairo_move_to(cr, app->points[from].x, app->points[from].y);
             cairo_line_to(cr, app->points[to].x, app->points[to].y);
             cairo_stroke(cr);
         }
-        
+        // Close the loop to depot if needed
         int last = app->optimal_route[app->route_length - 1];
         cairo_move_to(cr, app->points[last].x, app->points[last].y);
         cairo_line_to(cr, app->points[0].x, app->points[0].y);
@@ -486,3 +507,4 @@ int main(int argc, char *argv[]) {
     
     return 0;
 }
+
