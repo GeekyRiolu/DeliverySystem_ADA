@@ -424,14 +424,58 @@ void on_calculate_route(GtkWidget *widget, gpointer data) {
     gtk_widget_queue_draw(app->drawing_area);
 }
 
-void on_optimize_packages(GtkWidget *widget, gpointer data) {
-    int optimal_value = knapsack(50);
-    
-    char info[200];
+// Helper to show selected packages for knapsack
+void show_knapsack_details(int capacity) {
+    int dp[capacity + 1];
+    int keep[MAX_PACKAGES][capacity + 1];
+    memset(dp, 0, sizeof(dp));
+    memset(keep, 0, sizeof(keep));
+    for (int i = 0; i < app->num_packages; i++) {
+        for (int w = capacity; w >= app->packages[i].weight; w--) {
+            int value_with_priority = app->packages[i].value * app->packages[i].priority;
+            int carbon_penalty = (int)(app->packages[i].carbon_footprint * 10);
+            int net_value = value_with_priority - carbon_penalty;
+            if (dp[w - app->packages[i].weight] + net_value > dp[w]) {
+                dp[w] = dp[w - app->packages[i].weight] + net_value;
+                keep[i][w] = 1;
+            }
+        }
+    }
+    // Backtrack to find selected packages
+    int w = capacity;
+    int total_weight = 0;
+    int total_value = 0;
+    char details[2048] = "";
+    strcat(details, "ID   Wt   Val  Prio  C.Foot\n");
+    int first = 1;
+    for (int i = app->num_packages - 1; i >= 0; i--) {
+        if (w >= app->packages[i].weight && keep[i][w]) {
+            char pkg[128];
+            snprintf(pkg, sizeof(pkg), "%2d  %3d  %4d   %2d   %5.1f\n",
+                app->packages[i].id, app->packages[i].weight, app->packages[i].value, app->packages[i].priority, app->packages[i].carbon_footprint);
+            strcat(details, pkg);
+            total_weight += app->packages[i].weight;
+            total_value += app->packages[i].value * app->packages[i].priority - (int)(app->packages[i].carbon_footprint * 10);
+            w -= app->packages[i].weight;
+            first = 0;
+        }
+    }
+    char info[2500];
     snprintf(info, sizeof(info),
-            "Package optimization complete! Optimal value: %d (50kg capacity)",
-            optimal_value);
+        "Knapsack: MaxCap=%dkg | TotalValue=%d | TotalWeight=%dkg\n-------------------------------\n%s",
+        capacity, total_value, total_weight, details);
+    // Set monospace font for the label
+    PangoAttrList *attrs = pango_attr_list_new();
+    pango_attr_list_insert(attrs, pango_attr_family_new("monospace"));
+    gtk_label_set_attributes(GTK_LABEL(app->info_label), attrs);
+    pango_attr_list_unref(attrs);
     gtk_label_set_text(GTK_LABEL(app->info_label), info);
+}
+
+void on_optimize_packages(GtkWidget *widget, gpointer data) {
+    int max_capacity = 50;
+    show_knapsack_details(max_capacity);
+    gtk_widget_queue_draw(app->drawing_area);
 }
 
 void init_gui() {
