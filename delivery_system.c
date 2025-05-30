@@ -9,8 +9,8 @@
 #define MAX_NODES 50
 #define MAX_PACKAGES 100
 #define INF 999999
-#define CANVAS_WIDTH 800
-#define CANVAS_HEIGHT 600
+#define CANVAS_WIDTH 1000
+#define CANVAS_HEIGHT 1000
 #define VEHICLE_SIZE 20
 #define ANIMATION_INTERVAL 50
 
@@ -46,23 +46,19 @@ typedef struct {
     GtkWidget *optimize_button;
     GtkWidget *start_button;
     GtkWidget *speed_scale;
-    
+    GtkWidget *table_label;
     DeliveryPoint points[MAX_NODES];
     Package packages[MAX_PACKAGES];
     Route routes[MAX_NODES * MAX_NODES];
-    
     int num_points;
     int num_packages;
     int num_routes;
-    
     int *optimal_route;
     int route_length;
     double total_distance;
     double total_emissions;
-    
     int selected_point;
     gboolean show_route;
-    
     gboolean animation_running;
     int current_route_segment;
     double vehicle_progress;
@@ -108,19 +104,16 @@ void dijkstra(int graph[MAX_NODES][MAX_NODES], int src, int dist[], int parent[]
 int knapsack(int capacity) {
     int dp[capacity + 1];
     memset(dp, 0, sizeof(dp));
-    
     for (int i = 0; i < app->num_packages; i++) {
         for (int w = capacity; w >= app->packages[i].weight; w--) {
-            int value_with_priority = app->packages[i].value * app->packages[i].priority;
+            int value_with_priority = app->packages[i].value; // No priority
             int carbon_penalty = (int)(app->packages[i].carbon_footprint * 10);
             int net_value = value_with_priority - carbon_penalty;
-            
             if (dp[w - app->packages[i].weight] + net_value > dp[w]) {
                 dp[w] = dp[w - app->packages[i].weight] + net_value;
             }
         }
     }
-    
     return dp[capacity];
 }
 
@@ -134,17 +127,19 @@ void initialize_data() {
     char *locations[] = {
         "Depot - Koramangala", "Electronic City", "Whitefield", "Banashankari",
         "Jayanagar", "Indiranagar", "HSR Layout", "BTM Layout",
-        "Malleshwaram", "Rajajinagar", "Hebbal", "Marathahalli"
+        "Malleshwaram", "Rajajinagar", "Hebbal", "Marathahalli",
+        "Yeshwanthpur", "Kengeri", "Vijayanagar", "Ulsoor",
+        "Shivajinagar", "KR Puram", "Basavanagudi", "RT Nagar"
     };
     
-    app->num_points = 12;
+    app->num_points = 18;
     
     for (int i = 0; i < app->num_points; i++) {
         app->points[i].id = i;
         strcpy(app->points[i].name, locations[i]);
         app->points[i].is_depot = (i == 0);
-        app->points[i].x = 100 + (i % 4) * 180 + (rand() % 50);
-        app->points[i].y = 100 + (i / 4) * 150 + (rand() % 50);
+        app->points[i].x = 100 + (i % 6) * 160 + (rand() % 20);
+        app->points[i].y = 100 + (i / 6) * 160 + (rand() % 20);
         app->points[i].package_count = rand() % 5 + 1;
     }
     
@@ -288,6 +283,19 @@ gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
         snprintf(package_info, sizeof(package_info), "Packages: %d", app->points[i].package_count);
         cairo_move_to(cr, x + 15, y + 10);
         cairo_show_text(cr, package_info);
+        // Show total value of packages for this node
+        int total_value = 0;
+        for (int j = 0; j < app->num_packages; j++) {
+            if (app->packages[j].destination_id == app->points[i].id) {
+                total_value += app->packages[j].value - (int)(app->packages[j].carbon_footprint * 10);
+            }
+        }
+        if (total_value > 0) {
+            char value_info[50];
+            snprintf(value_info, sizeof(value_info), "Value: %d", total_value);
+            cairo_move_to(cr, x + 15, y + 25);
+            cairo_show_text(cr, value_info);
+        }
     }
     
     if (app->animation_running && app->optimal_route) {
@@ -432,7 +440,7 @@ void show_knapsack_details(int capacity) {
     memset(keep, 0, sizeof(keep));
     for (int i = 0; i < app->num_packages; i++) {
         for (int w = capacity; w >= app->packages[i].weight; w--) {
-            int value_with_priority = app->packages[i].value * app->packages[i].priority;
+            int value_with_priority = app->packages[i].value; // No priority
             int carbon_penalty = (int)(app->packages[i].carbon_footprint * 10);
             int net_value = value_with_priority - carbon_penalty;
             if (dp[w - app->packages[i].weight] + net_value > dp[w]) {
@@ -445,31 +453,31 @@ void show_knapsack_details(int capacity) {
     int w = capacity;
     int total_weight = 0;
     int total_value = 0;
-    char details[2048] = "";
-    strcat(details, "ID   Wt   Val  Prio  C.Foot\n");
-    int first = 1;
+    char details[4096] = "";
+    strcat(details, "ID   Wt   Val   C.Foot  Location                Value\n");
     for (int i = app->num_packages - 1; i >= 0; i--) {
         if (w >= app->packages[i].weight && keep[i][w]) {
-            char pkg[128];
-            snprintf(pkg, sizeof(pkg), "%2d  %3d  %4d   %2d   %5.1f\n",
-                app->packages[i].id, app->packages[i].weight, app->packages[i].value, app->packages[i].priority, app->packages[i].carbon_footprint);
+            int net_value = app->packages[i].value - (int)(app->packages[i].carbon_footprint * 10);
+            char pkg[256];
+            snprintf(pkg, sizeof(pkg), "%2d  %3d  %4d   %5.1f  %-22s %5d\n",
+                app->packages[i].id, app->packages[i].weight, app->packages[i].value, app->packages[i].carbon_footprint,
+                app->points[app->packages[i].destination_id].name, net_value);
             strcat(details, pkg);
             total_weight += app->packages[i].weight;
-            total_value += app->packages[i].value * app->packages[i].priority - (int)(app->packages[i].carbon_footprint * 10);
+            total_value += net_value;
             w -= app->packages[i].weight;
-            first = 0;
         }
     }
-    char info[2500];
+    char info[5000];
     snprintf(info, sizeof(info),
-        "Knapsack: MaxCap=%dkg | TotalValue=%d | TotalWeight=%dkg\n-------------------------------\n%s",
+        "Knapsack: MaxCap=%dkg | TotalValue=%d | TotalWeight=%dkg\n-----------------------------------------------\n%s",
         capacity, total_value, total_weight, details);
-    // Set monospace font for the label
+    // Set monospace font for the table label
     PangoAttrList *attrs = pango_attr_list_new();
     pango_attr_list_insert(attrs, pango_attr_family_new("monospace"));
-    gtk_label_set_attributes(GTK_LABEL(app->info_label), attrs);
+    gtk_label_set_attributes(GTK_LABEL(app->table_label), attrs);
     pango_attr_list_unref(attrs);
-    gtk_label_set_text(GTK_LABEL(app->info_label), info);
+    gtk_label_set_text(GTK_LABEL(app->table_label), info);
 }
 
 void on_optimize_packages(GtkWidget *widget, gpointer data) {
@@ -483,33 +491,35 @@ void init_gui() {
     gtk_window_set_title(GTK_WINDOW(app->window), "Bengaluru Smart Delivery System");
     gtk_window_set_default_size(GTK_WINDOW(app->window), 900, 700);
     gtk_window_set_position(GTK_WINDOW(app->window), GTK_WIN_POS_CENTER);
-    
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_container_add(GTK_CONTAINER(app->window), vbox);
-    
     GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 5);
-    
     app->route_button = gtk_button_new_with_label("Calculate Optimal Route");
     app->optimize_button = gtk_button_new_with_label("Optimize Packages");
     app->start_button = gtk_button_new_with_label("Start Delivery");
     GtkWidget *speed_label = gtk_label_new("Speed:");
     app->speed_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.5, 3.0, 0.5);
     gtk_range_set_value(GTK_RANGE(app->speed_scale), 1.0);
-    
     gtk_box_pack_start(GTK_BOX(hbox), app->route_button, FALSE, FALSE, 5);
     gtk_box_pack_start(GTK_BOX(hbox), app->optimize_button, FALSE, FALSE, 5);
     gtk_box_pack_start(GTK_BOX(hbox), app->start_button, FALSE, FALSE, 5);
     gtk_box_pack_start(GTK_BOX(hbox), speed_label, FALSE, FALSE, 5);
     gtk_box_pack_start(GTK_BOX(hbox), app->speed_scale, FALSE, FALSE, 5);
-    
+    // --- Main horizontal box for graph and table ---
+    GtkWidget *hbox_main = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     app->drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(app->drawing_area, CANVAS_WIDTH, CANVAS_HEIGHT);
-    gtk_box_pack_start(GTK_BOX(vbox), app->drawing_area, TRUE, TRUE, 0);
-    
+    gtk_box_pack_start(GTK_BOX(hbox_main), app->drawing_area, FALSE, FALSE, 0);
+    app->table_label = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(app->table_label), 0.0);
+    gtk_label_set_yalign(GTK_LABEL(app->table_label), 0.0);
+    gtk_widget_set_halign(app->table_label, GTK_ALIGN_START);
+    gtk_widget_set_valign(app->table_label, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(hbox_main), app->table_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox_main, TRUE, TRUE, 0);
     app->info_label = gtk_label_new("Bengaluru Smart Delivery System - Click on delivery points for details");
     gtk_box_pack_start(GTK_BOX(vbox), app->info_label, FALSE, FALSE, 5);
-    
     g_signal_connect(app->window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     g_signal_connect(app->drawing_area, "draw", G_CALLBACK(on_draw), NULL);
     g_signal_connect(app->drawing_area, "button-press-event", G_CALLBACK(on_button_press), NULL);
@@ -517,14 +527,11 @@ void init_gui() {
     g_signal_connect(app->optimize_button, "clicked", G_CALLBACK(on_optimize_packages), NULL);
     g_signal_connect(app->start_button, "clicked", G_CALLBACK(on_start_delivery), app);
     g_signal_connect(app->speed_scale, "value-changed", G_CALLBACK(on_speed_changed), app);
-    
     gtk_widget_add_events(app->drawing_area, GDK_BUTTON_PRESS_MASK);
-    
     app->animation_running = FALSE;
     app->current_route_segment = 0;
     app->vehicle_progress = 0.0;
     app->animation_speed = 1.0;
-    
     gtk_widget_show_all(app->window);
 }
 
